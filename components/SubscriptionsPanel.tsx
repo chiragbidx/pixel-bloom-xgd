@@ -68,7 +68,8 @@ function formatAmount(amount: number) {
 }
 
 function formatDate(date: string) {
-  return new Date(date).toLocaleDateString();
+  // Render as YYYY-MM-DD for deterministic server/client output.
+  return date;
 }
 
 export function SubscriptionsPanel() {
