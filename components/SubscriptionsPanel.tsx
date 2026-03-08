@@ -1,6 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useTransition } from "react";
+import {
+  fetchSubscriptions,
+  setSubscriptionPlan,
+  cancelSub,
+  refundSub,
+} from "@/app/actions/subscriptionActions";
 
 type Subscription = {
   id: string;
@@ -14,53 +20,6 @@ type Subscription = {
   lastPayment: string;
 };
 
-const initialData: Subscription[] = [
-  {
-    id: "sub_001",
-    customer: "John Doe",
-    email: "john.doe@example.com",
-    status: "active",
-    plan: "Pro",
-    amount: 2999,
-    startDate: "2023-01-08",
-    renewDate: "2024-01-08",
-    lastPayment: "2023-12-31"
-  },
-  {
-    id: "sub_002",
-    customer: "Jane Smith",
-    email: "jane.smith@example.com",
-    status: "trialing",
-    plan: "Starter",
-    amount: 999,
-    startDate: "2023-12-15",
-    renewDate: "2024-01-15",
-    lastPayment: "2023-12-15"
-  },
-  {
-    id: "sub_003",
-    customer: "Acme Inc",
-    email: "admin@acme.com",
-    status: "past_due",
-    plan: "Business",
-    amount: 9999,
-    startDate: "2022-02-01",
-    renewDate: "2024-02-01",
-    lastPayment: "2024-01-01"
-  },
-  {
-    id: "sub_004",
-    customer: "Bob Lee",
-    email: "bob.lee@example.com",
-    status: "cancelled",
-    plan: "Pro",
-    amount: 2999,
-    startDate: "2023-03-10",
-    renewDate: "2024-03-10",
-    lastPayment: "2023-07-10"
-  },
-];
-
 const PLAN_OPTIONS = ["Starter", "Pro", "Business"];
 
 function formatAmount(amount: number) {
@@ -68,17 +27,25 @@ function formatAmount(amount: number) {
 }
 
 function formatDate(date: string) {
-  // Render as YYYY-MM-DD for deterministic server/client output.
   return date;
 }
 
 export function SubscriptionsPanel() {
-  const [rows, setRows] = useState<Subscription[]>(initialData);
+  const [rows, setRows] = useState<Subscription[]>([]);
   const [filter, setFilter] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<string>("");
   const [actionStatus, setActionStatus] = useState<{[id: string]: string}>({});
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchSubscriptions().then((data) => {
+      setRows(data);
+      setLoading(false);
+    });
+  }, []);
 
   const filtered = filter.length
     ? rows.filter(sub =>
@@ -88,28 +55,48 @@ export function SubscriptionsPanel() {
     : rows;
 
   const handleChangePlan = (id: string, newPlan: string) => {
-    setRows(rows =>
-      rows.map(sub =>
-        sub.id === id ? { ...sub, plan: newPlan } : sub
-      )
-    );
-    setActionStatus(status => ({ ...status, [id]: "Plan changed!" }));
-    setEditingId(null);
+    setActionStatus(s => ({ ...s, [id]: "" }));
+    startTransition(() => {
+      setSubscriptionPlan(id, newPlan).then((updated) => {
+        setRows((subs) =>
+          subs.map((sub) =>
+            sub.id === id ? updated : sub
+          )
+        );
+        setActionStatus((s) => ({ ...s, [id]: "Plan changed!" }));
+        setEditingId(null);
+      });
+    });
   };
 
   const handleRefund = (id: string) => {
-    setActionStatus(status => ({ ...status, [id]: "Payment refunded!" }));
-    setConfirmId(null);
+    setActionStatus(s => ({ ...s, [id]: "" }));
+    startTransition(() => {
+      refundSub(id).then((updated) => {
+        setRows((subs) =>
+          subs.map((sub) =>
+            sub.id === id ? updated : sub
+          )
+        );
+        setActionStatus((s) => ({ ...s, [id]: "Payment refunded!" }));
+        setConfirmId(null);
+      });
+    });
   };
 
   const handleCancel = (id: string) => {
-    setRows(rows =>
-      rows.map(sub =>
-        sub.id === id ? { ...sub, status: "cancelled" } : sub
-      )
-    );
-    setActionStatus(status => ({ ...status, [id]: "Subscription cancelled." }));
-    setConfirmId(null);
+    setActionStatus(s => ({ ...s, [id]: "" }));
+    startTransition(() => {
+      cancelSub(id).then((updated) => {
+        setRows((subs) =>
+          subs.map((sub) =>
+            sub.id === id ? updated : sub
+          )
+        );
+        setActionStatus((s) => ({ ...s, [id]: "Subscription cancelled." }));
+        setConfirmId(null);
+      });
+    });
   };
 
   return (
@@ -128,6 +115,9 @@ export function SubscriptionsPanel() {
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-[#8243ff]/10 bg-white shadow-xs">
+        {loading ? (
+          <div className="p-8 text-center text-[#433269] text-sm">Loading subscriptions...</div>
+        ) : (
         <table className="min-w-full text-sm">
           <thead>
             <tr className="bg-[#f1edfa] text-[#433269]">
@@ -180,6 +170,7 @@ export function SubscriptionsPanel() {
                         value={selectedPlan || sub.plan}
                         onChange={e => setSelectedPlan(e.target.value)}
                         className="rounded border px-2 py-1 text-sm"
+                        disabled={isPending}
                       >
                         {PLAN_OPTIONS.map(plan => (
                           <option value={plan} key={plan}>
@@ -190,12 +181,14 @@ export function SubscriptionsPanel() {
                       <button
                         onClick={() => handleChangePlan(sub.id, selectedPlan || sub.plan)}
                         className="rounded bg-[#8243ff] text-white px-2 py-1 text-xs font-semibold hover:bg-[#5e2eb6]"
+                        disabled={isPending}
                       >
                         Save
                       </button>
                       <button
                         onClick={() => setEditingId(null)}
                         className="rounded bg-gray-200 text-[#5e2eb6] px-2 py-1 text-xs font-semibold hover:bg-gray-300"
+                        disabled={isPending}
                       >
                         Cancel
                       </button>
@@ -207,6 +200,7 @@ export function SubscriptionsPanel() {
                         onClick={() => { setEditingId(sub.id); setSelectedPlan(sub.plan); }}
                         className="rounded bg-[#f1edfa] text-[#8243ff] px-2 py-0.5 text-xs font-semibold hover:bg-[#e6dff9]"
                         title="Change plan"
+                        disabled={isPending}
                       >
                         Change
                       </button>
@@ -220,14 +214,14 @@ export function SubscriptionsPanel() {
                   <button
                     onClick={() => setConfirmId(sub.id + "---REFUND")}
                     className="rounded bg-[#f1edfa] text-[#8243ff] px-2 py-0.5 text-xs font-semibold hover:bg-[#e6dff9]"
-                    disabled={sub.status !== "active" && sub.status !== "past_due"}
+                    disabled={isPending || (sub.status !== "active" && sub.status !== "past_due")}
                   >
                     Refund
                   </button>
                   <button
                     onClick={() => setConfirmId(sub.id + "---CANCEL")}
                     className="rounded bg-gray-200 text-[#5e2eb6] px-2 py-0.5 text-xs font-semibold hover:bg-gray-300"
-                    disabled={sub.status !== "active" && sub.status !== "trialing" && sub.status !== "past_due"}
+                    disabled={isPending || (sub.status !== "active" && sub.status !== "trialing" && sub.status !== "past_due")}
                   >
                     Cancel
                   </button>
@@ -236,12 +230,14 @@ export function SubscriptionsPanel() {
                       <button
                         onClick={() => handleRefund(sub.id)}
                         className="rounded bg-red-100 text-red-700 px-2 py-0.5 text-xs font-semibold hover:bg-red-200"
+                        disabled={isPending}
                       >
                         Confirm Refund
                       </button>
                       <button
                         onClick={() => setConfirmId(null)}
                         className="ml-1 rounded bg-gray-100 text-gray-500 px-2 py-0.5 text-xs font-semibold hover:bg-gray-200"
+                        disabled={isPending}
                       >
                         Cancel
                       </button>
@@ -252,12 +248,14 @@ export function SubscriptionsPanel() {
                       <button
                         onClick={() => handleCancel(sub.id)}
                         className="rounded bg-red-100 text-red-700 px-2 py-0.5 text-xs font-semibold hover:bg-red-200"
+                        disabled={isPending}
                       >
                         Confirm Cancel
                       </button>
                       <button
                         onClick={() => setConfirmId(null)}
                         className="ml-1 rounded bg-gray-100 text-gray-500 px-2 py-0.5 text-xs font-semibold hover:bg-gray-200"
+                        disabled={isPending}
                       >
                         Back
                       </button>
@@ -271,9 +269,10 @@ export function SubscriptionsPanel() {
             ))}
           </tbody>
         </table>
+        )}
       </div>
       <div className="mt-8 text-xs text-[#433269] italic">
-        Changes are local; backend integration ready for API/data layer upgrades. 
+        All data is persisted in PostgreSQL via Prisma. 
       </div>
     </div>
   );
