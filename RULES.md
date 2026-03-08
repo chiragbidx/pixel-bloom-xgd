@@ -1,94 +1,59 @@
-# RULES.md — Change Boundaries & Placement (Boilerplate)
+# RULES.md — Change Boundaries & Placement (Backend & DB Ready)
 
-No auth, dashboard, or data layer exists yet. These guardrails keep changes predictable. Update this file first if scope expands.
+This document sets guardrails for routes, backend, and database structure. Update first if scope expands.
 
 ## 1) Routing & Placement
-- Public/marketing pages live directly under `app/` (e.g., `app/page.tsx`, `app/about/page.tsx`).
-- When a dashboard is added, place authenticated pages under `app/(dashboard)/dashboard/` and reuse the shared dashboard layout there.
-- Auth flows (when added) belong in `app/(login)/` with their server actions in the same segment.
-- New feature areas should use `app/(dashboard)/<feature>/` once the dashboard shell exists.
-- Navigation/sidebar definitions should reside in `app/(dashboard)/dashboard/layout.tsx` once created; add nav entries in the same change as the new page.
+- Public pages live in `app/`.
+- Dashboard/auth (if any): use `app/(dashboard)/` and `app/(login)/` route groups, with shared layouts.
+- Add client UI islands in `components/`.
+- API/backend/data logic: use server actions in `app/actions/` and helpers in `lib/db/`.
 
-## 2) Dashboard Page Pattern (Future)
-- Use `app/(dashboard)/dashboard/general/page.tsx` as the reference once it exists (spacing, heading, card wrapper, forms).
-- Keep dashboard pages as Server Components; add `'use client'` only when client hooks are needed.
-- Do not import Client Components (or hooks like `useState`, `useEffect`, `useActionState`) into Server Components. If a file needs these, add `"use client"` at the top and keep server-only code out of it. Prefer small client islands (e.g., `components/AgentActionPanel.tsx`) that are imported into server pages.
-- Preserve the shared sidebar/main shell in `dashboard/layout.tsx`; do not reimplement sidebars per page.
+## 2) Dashboard Page Pattern
+- Use Server Components under `app/` unless hooks/event handlers are required; mark `use client` if needed.
+- Never mix hooks or browser APIs into Server Components.
+- Keep dashboard shell in `dashboard/layout.tsx` when created.
 
-## 3) Backend & Data
-- Backend/data layer is absent. When adding data access, centralize helpers in `lib/db/queries.ts` instead of ad-hoc queries.
-- Stripe/billing (if introduced) goes in `lib/payments/*`; update server actions and route handlers together.
-- Prisma (future): edit `prisma/schema.prisma`; generate migrations via `npx prisma migrate dev --name <feature>` for validation; never hand-edit migration SQL.
-- Avoid time- or randomness-dependent values inside React render (`new Date()`, `Date.now()`, `Math.random()`). Precompute in server components, shared constants, or `useEffect` for client-only needs.
+## 3) Backend & Data (NEW: Present!)
+- Use Prisma for DB schema (`prisma/schema.prisma`).
+- Centralize queries in `lib/db/queries.ts` (no ad-hoc queries).
+- Place server actions for data ops in `app/actions/`.
+- Only mutate data via these shared helpers/server actions.
+- Run migrations using `npx prisma migrate dev --name <feature>`; never hand-edit SQL.
+- Amounts: store in cents for integers, dates as DateTime (ISO).
+- Enum and types: sync with frontend data structures.
 
-## 4) Auth & Security (Future)
-- Session/cookie semantics (`lib/auth/session.ts`, `middleware.ts`) require explicit approval once they exist.
-- Guard mutations with validated wrappers (`validatedAction*`, `withTeam`) when available; do not bypass them.
+## 4) Auth & Security
+- Auth/session setup (`lib/auth/session.ts`, `middleware.ts`) requires approval.
+- Server actions must only return serializable data (never JSX, never functions).
 
 ## 5) Infrastructure & Scripts
-- Treat `scripts/` as infrastructure; adjust only with intent (currently minimal placeholders).
-- Respect existing path structure; avoid moving files across route groups without agreement.
-- Runtime UI may import only `scripts/error-reporter.ts` (via `components/ErrorReporter.tsx`); keep other scripts server-only.
+- Scripts/infra remain server-only, except `error-reporter.ts` for ErrorReporter component.
+- Never move files across route groups without coordination.
 
-## 6) Coordination
-- Keep shared UI primitives backward compatible or update all consumers.
-- For cross-cutting changes, document affected routes/actions in PR/commit notes.
-- Avoid creating new `*.md` explainer files unless explicitly requested; prefer updating existing docs.
-- Never use double quotes (`"`) in any BuildArtifact title.
+## 6) Coordination & Docs
+- Update FILES.md and README.md for any backend/data/api changes.
+- Avoid new *.md explainers unless explicitly needed.
+- Describe all new DB/API contracts for dashboard/server actions in existing docs.
 
-# Next.js Server / Client Component Rules (App Router)
+# Next.js Server/Client Patterns
 
 ## Server vs Client Components
-1. Default: files under `app/` are Server Components.
-2. Use `"use client"` only when the file needs hooks (`useState`, `useEffect`, etc.), browser APIs (`window`, `document`, `localStorage`), event handlers, or other interactive UI.
-3. Keep Server Components for data fetching, API calls, DB access, env vars, and static rendering.
+- Default files in `app/` are Server Components.
+- Use `use client` at top for component files using hooks/event handlers.
+- Server Components handle SSR, data fetching, and API logic.
 
 ## Server Actions
-- Never place `"use server"` inside a Client Component.
-- Put all server actions under `app/actions/` and start each file with `"use server"`.
-- Return only serializable data (strings, numbers, booleans, objects, arrays); never return JSX.
+- Place in `app/actions/*.ts`; must start with `use server`.
+- Must be serializable (no JSX or references).
+- Call only shared helpers and DB methods inside actions.
 
-**Pattern**
-```
-app/actions/generateDocs.ts
-"use server";
-export async function generateDocs(formData: FormData) { /* server logic */ }
+## Environment & Hydration
+- Access `process.env` for secrets only in server actions/components.
+- Hydration must use deterministic output (no random/time/locale in render).
 
-components/generate-form.tsx
-"use client";
-import { generateDocs } from "@/app/actions/generateDocs";
-export default function GenerateForm() {
-  return <form action={generateDocs}>{/* ... */}</form>;
-}
+## DB & API Best Practices
+- Only access the database via `lib/db/queries.ts` or appropriate helpers.
+- Never introduce ad-hoc queries in components or new server code.
 
-app/page.tsx
-import GenerateForm from "@/components/generate-form";
-export default function Page() { return <GenerateForm />; }
-```
-
-## Hydration Safety
-- Do not call `new Date()`, `Date.now()`, or `Math.random()` directly in render. Precompute on the server, inside `useEffect`, or as constants.
-
-## Environment Variables
-- Access `process.env` only in Server Components or Server Actions. Never expose secrets in Client Components.
-
-## File Structure (target)
-```
-app/
-  actions/
-  ai/
-  data/
-components/
-  forms/
-  ui/
-lib/
-  openai.ts
-  db.ts
-```
-
-## Quick checks before coding
-1) Does it need hooks? → mark `"use client"`.
-2) Does it touch env vars/APIs/DB? → keep on server.
-3) Creating a server action? → place in `app/actions/`, start with `"use server"`.
-
-Never mix client and server logic in the same file.
+---
+Operate carefully. Stay documented and deterministic. Ask first if in doubt.
